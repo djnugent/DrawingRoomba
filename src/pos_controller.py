@@ -1,19 +1,19 @@
 import math
 import numpy as np
 
-def PosController:
+class PosController:
 
     def __init__(self):
-        self.dist_p = 1.0
-        self.turn_p = 1.0
-        self.spin_p = 1.0
+        self.dist_p = 0.5
+        self.turn_p = 100
+        self.spin_p = 0.07
 
         self.min_speed = 0.015 # m/s
-        self.max_speed = 0.5 # m/s
-        self.min_radius = 0.3 # meters ( wheel base diameter)
+        self.max_speed = 0.3 # m/s
+        self.min_radius = 0.02 # meters ( wheel base diameter)
         self.max_radius = 2.0 # meters
         self.dist_precision = 0.005 # meters
-        self.heading_precision = 0.01 # degrees
+        self.heading_precision = 0.1 # degrees
         self.transit_angle = 5 # degrees
         self.fine_tune_dist = 0.025 # meters
 
@@ -25,38 +25,43 @@ def PosController:
 
     def update(self, current_x, current_y, current_heading, target_x, target_y, target_heading):
 
-        dist_error = math.sqrt((target_x-current_y)**2+(target_y-current_y)**2)
-        transit_heading_error = math.atan(target_x-current_x,target_y-current_y)
-        transit_heading_error = (transit_heading_error + 180) % 360 - 180
+        dist_error = math.sqrt((target_x-current_x)**2+(target_y-current_y)**2)
+        transit_heading = math.atan2(target_y-current_y,target_x-current_x)
+        transit_heading_error = (transit_heading + math.pi) % (math.pi*2) - math.pi - current_heading
         heading_error = target_heading - current_heading
-        heading_error = (heading_error + 180) % 360 - 180
+        heading_error = (heading_error + math.pi) % (math.pi*2) - math.pi
+
+        print("dist: {}m, heading: {}, tar_heading: {}, heading_error: {}".format(round(dist_error,2),round(math.degrees(current_heading),2),round(math.degrees(target_heading),2),round(math.degrees(heading_error),2)))
 
         # We are at our location
-        if dist_error < self.precision:
+        if dist_error < self.dist_precision:
             # We are pointing in the right direction
             if abs(heading_error) <= math.radians(self.heading_precision):
                 return 0,0, True
             # We are not pointing in the right direction -> spin in place
             else:
-                spin_speed = self._spd_lim(heading_error * self.spin_p)
-                return spin_speed, 1, False
+                spin_speed = self._spd_lim(heading_error * self.spin_p )
+                return spin_speed, None, False
 
         # we have a large heading error
-        elif abs(transit_heading_error) > self.radians(self.transit_angle):
+        elif abs(transit_heading_error) > math.radians(self.transit_angle):
             # Allow for reverse adjustments when we are close
             if dist_error < self.fine_tune_dist:
                 linear_speed = self._spd_lim(-dist_error * self.dist_p)
-                radius = self._rad_lim((180 - transit_heading_error) * self.turn_p)
+                radius = self._rad_lim(self.turn_p/(math.pi - transit_heading_error))
                 return linear_speed, radius, False
             # We are far away so we spin in place
             else:
                 spin_speed = self._spd_lim(transit_heading_error * self.spin_p)
-                return spin_speed, 1, False
+                return spin_speed, None, False
 
         # We are in transit to location
         else:
             linear_speed = self._spd_lim(dist_error * self.dist_p)
-            radius = self._rad_lim(transit_heading_error * self.turn_p)
+            if transit_heading_error != 0:
+                radius = self._rad_lim(self.turn_p/transit_heading_error)
+            else:
+                radius = 0
             return linear_speed, radius, False
 
 if __name__=="__main__":
@@ -65,25 +70,27 @@ if __name__=="__main__":
     from pos_filter import PosFilter
 
     robot = Roomba("COM10")
-    posf = PosFilter()
+    pos_filter = PosFilter(encoder_weight=1.0)
     control = PosController()
 
-    filter_rate = 50
-    control_rate = 25
+    filter_rate = 30
+    control_rate = 30
     last_filter = time.time()
     last_control = time.time()
 
     arrived = False
-    north,east,heading = 0,0,0
-    set_north, set_east, set_heading = input("Enter location (north, east, heading): ").split(',')
-
+    x,y,heading = 0,0,0
+    set_x, set_y, set_heading = input("Enter location (x, y, heading): ").split(',')
+    set_x = float(set_x)
+    set_y = float(set_y)
+    set_heading = math.radians(float(set_heading))
     while not arrived:
         if time.time() - last_filter > 1.0/filter_rate:
             enc_left, enc_right = robot.encoders()
-            north,east,heading = pos_filter.update(enc_left, enc_right,0,0)
+            x,y,heading = pos_filter.update(enc_left, enc_right,0,0)
             last_filter = time.time()
 
         if time.time() - last_control > 1.0/control_rate:
-            speed, rad, arrived = control.update(north,east,heading,set_north,set_east,set_heading)
+            speed, rad, arrived = control.update(x,y,heading,set_x,set_y,set_heading)
             robot.drive(speed,rad)
             last_control = time.time()

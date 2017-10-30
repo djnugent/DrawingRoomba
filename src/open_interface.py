@@ -1,6 +1,8 @@
 import serial
 import struct
 import time
+import math
+import numpy as np
 
 #notes: big endian
 class Roomba:
@@ -66,12 +68,22 @@ class Roomba:
     def drive(self,velocity,radius):
         opcode = 137
 
-        if not -0.5 <= velocity <= 0.5:
+        velocity *= 1000
+        # Don't spin
+        if radius is not None:
+            radius *= 1000
+        # Spin in place
+        else:
+            radius = np.sign(velocity)
+            velocity = abs(velocity)
+
+        if not -500 <= velocity <= 500:
             raise ValueError("Velocity out of range: -0.5 - 0.5 m/s")
-        if not -2.0 <= radius <= 2.0:
+        if not -2000 <= radius <= 2000:
             raise ValueError("Radius out of range: -2.0 - 2.0 m")
 
-        self._send(">Bhh",opcode,int(velocity*1000),int(radius*1000))
+
+        self._send(">Bhh",opcode,int(velocity),int(radius))
 
     # Get change in encoder in ticks
     # TODO test overflow and underflow
@@ -90,23 +102,22 @@ class Roomba:
         # Check for left overflow
         diff_ticks_left = cumm_left_ticks - self.last_left_ticks
         if diff_ticks_left < -60000: #reverse overflow
-            diff_ticks_left -= 65536
+            diff_ticks_left += 65536
         elif diff_ticks_left > 60000: #foward overflow
-            diff_ticks_left = 65536 - diff_ticks_left
+            diff_ticks_left -= 65536
         self.last_left_ticks = cumm_left_ticks
         # Check for right overflow
         diff_ticks_right = cumm_right_ticks - self.last_right_ticks
         if diff_ticks_right < -60000: #reverse overflow
-            diff_ticks_right -= 65536
+            diff_ticks_right += 65536
         elif diff_ticks_right > 60000: #foward overflow
-            diff_ticks_right = 65536 - diff_ticks_right
+            diff_ticks_right -= 65536
         self.last_right_ticks = cumm_right_ticks
 
         return diff_ticks_left, diff_ticks_right
 
 
     # Get change in encoder in meters
-    # TODO test overflow and underflow
     def encoders(self):
         diff_ticks_left, diff_ticks_right = self._raw_encoders()
 
@@ -114,6 +125,7 @@ class Roomba:
         mtrs_per_tick = math.pi * 0.072 / 508.8 # 0.072 m diameter wheel and 508.8 ticks per revolution
         left = diff_ticks_left * mtrs_per_tick
         right = diff_ticks_right * mtrs_per_tick
+
         return  left, right
 
     # returns distance traveled since last request in meters
@@ -142,15 +154,8 @@ if __name__=="__main__":
     print("Connect")
     robot = Roomba("COM10")
     try:
-        print("Drive")
         robot.drive(0.1,0)
-        start = time.time()
-        for i in range(0,120):
+        while True:
             robot.encoders()
-        print("hz", 120.0/(time.time()-start))
-        print(robot.encoders())
-        print("distance",robot.distance())
-        print("Stop")
-        robot.drive(0,0)
     finally:
         robot.close()
