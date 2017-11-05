@@ -1,13 +1,14 @@
 import serial
 import time
 import struct
+import threading
 
 
 class Hedgehog:
     def __init__(self,port):
         self.ser = serial.Serial(port,9600)
         self.lock = threading.Lock()
-        self.pos = -1,-1,-1 # meters
+        self.pos = None,None,None # meters
         self.unread = False
 
         # start a background thread
@@ -39,8 +40,7 @@ class Hedgehog:
                   reserved = struct.unpack("<I",self.ser.read(4))[0]
                   crc = struct.unpack("<H",self.ser.read(2))[0]
                   # read flag bit mask
-                  valid = (flags & 0b00000001) > 0
-
+                  valid = (flags & 0b00000001) < 1
                   if valid:
                       self.lock.acquire()
                       self.pos = x /1000.0, y /1000.0, z /1000.0
@@ -49,10 +49,13 @@ class Hedgehog:
 
     def read(self):
         self.lock.acquire()
-        x,y,z = self.pos()
+        x,y,z = self.pos
         unread = self.unread
         self.unread = False
         self.lock.release()
+
+        if x is None:
+            return 0,0,0,None
 
         return x,y,z,unread
 
@@ -65,8 +68,8 @@ class Hedgehog:
 
 
 if __name__=="__main__":
-    rate = 20 # hz
-    hh = Hedgehog("COM9")
+    rate = 6 # hz
+    hh = Hedgehog("COM8")
     try:
         while True:
             print(hh.read())

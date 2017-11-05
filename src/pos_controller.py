@@ -23,15 +23,20 @@ class PosController:
     def _rad_lim(self,rad):
         return np.sign(rad) * min(max(abs(rad),self.min_radius),self.max_radius)
 
-    def update(self, current_x, current_y, current_heading, target_x, target_y, target_heading):
+    def set(self,target_x, target_y, target_heading):
+        self.target_x = target_x
+        self.target_y = target_y
+        self.target_heading = target_heading
 
-        dist_error = math.sqrt((target_x-current_x)**2+(target_y-current_y)**2)
-        transit_heading = math.atan2(target_y-current_y,target_x-current_x)
+    def update(self, current_x, current_y, current_heading):
+
+        dist_error = math.sqrt((self.target_x-current_x)**2+(self.target_y-current_y)**2)
+        transit_heading = math.atan2(self.target_y-current_y,self.target_x-current_x)
         transit_heading_error = (transit_heading + math.pi) % (math.pi*2) - math.pi - current_heading
-        heading_error = target_heading - current_heading
+        heading_error = self.target_heading - current_heading
         heading_error = (heading_error + math.pi) % (math.pi*2) - math.pi
 
-        print("dist: {}m, heading: {}, tar_heading: {}, heading_error: {}".format(round(dist_error,2),round(math.degrees(current_heading),2),round(math.degrees(target_heading),2),round(math.degrees(heading_error),2)))
+        print("dist: {}m, heading: {}, tar_heading: {}, heading_error: {}".format(round(dist_error,2),round(math.degrees(current_heading),2),round(math.degrees(self.target_heading),2),round(math.degrees(heading_error),2)))
 
         # We are at our location
         if dist_error < self.dist_precision:
@@ -84,6 +89,7 @@ if __name__=="__main__":
     set_x = float(set_x)
     set_y = float(set_y)
     set_heading = math.radians(float(set_heading))
+    control.set(set_x,set_y,set_heading)
     while not arrived:
         if time.time() - last_filter > 1.0/filter_rate:
             enc_left, enc_right = robot.encoders()
@@ -91,6 +97,6 @@ if __name__=="__main__":
             last_filter = time.time()
 
         if time.time() - last_control > 1.0/control_rate:
-            speed, rad, arrived = control.update(x,y,heading,set_x,set_y,set_heading)
+            speed, rad, arrived = control.update(x,y,heading)
             robot.drive(speed,rad)
             last_control = time.time()
