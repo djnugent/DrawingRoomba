@@ -1,16 +1,23 @@
 import math
 import numpy as np
+import time
+#from Adafruit_BNO055 import BNO055
+
 
 class PosFilter:
 
-    def __init__(self,robot,hh,encoder_weight = 0.9):
+    def __init__(self,robot,hh,bno,encoder_xy_weight = 0.9, encoder_heading_weight = 0.99):
         # sensors
         self.robot = robot
         self.hh = hh
+        self.bno = bno
 
         # Constants
         self.wheel_base = 0.235 # meters
-        self.encoder_weight = encoder_weight # ratio
+        self.encoder_xy_weight = encoder_xy_weight # ratio
+        self.encoder_heading_weight = encoder_heading_weight
+        self.beacon_heading_velocity = .1
+        self.beacon_alpha = 0.5
 
         # Filter State
         self.filter_x = 0 # meters
@@ -22,12 +29,16 @@ class PosFilter:
         self.odometry_y = 0
         self.odometry_heading = math.pi/2 #radians
 
+        # IMU state
+        self.bno_offset = None
+
         # Beacon state
         self.beacon_origin_x = None # X origin, need to calibrate to set
         self.beacon_origin_y = None # Y origin, need to calibrate to set
         self.beacon_rot_mat = None # Frame of reference rotation, need to calibrate to set
         self.beacon_last_x = None # last beacon x location in meters
         self.beacon_last_y = None # last beacon y location in meters
+        self.beacon_last_time = 0
         self.beacon_heading = 0 # beacon heading in radians
 
     def calibrate(self,x0,y0,x1,y1):
@@ -41,12 +52,19 @@ class PosFilter:
 
     def align(self):
 
+
         # Wait for valid location from beacon
+        print("waiting for valid data...")
         while self.hh.read()[3] is None:
             time.sleep(0.1)
+        print("Done")
 
         # Set starting location of encoders
         enc_origin_x, enc_origin_y = 0,0
+
+        # Set BNO offset
+        yaw, roll, pitch = self.bno.read_euler()
+        self.bno_offset = self.filter_heading - math.radians(360 - yaw)
 
         # Get starting location of beacon
         num_readings = 10.0
@@ -78,7 +96,7 @@ class PosFilter:
         # Register final encoder position
         self.robot.drive(0,0)
         time.sleep(0.2)
-        left,right = robot.encoders()
+        left,right = self.robot.encoders()
         diff_x, diff_y, diff_heading = self._odometry(left,right,heading)
         x+=diff_x
         y+=diff_y
@@ -143,12 +161,13 @@ class PosFilter:
     # Update filter
     def update(self):
 
-        encoder_weight = self.encoder_weight
+        encoder_xy_weight = self.encoder_xy_weight
+        encoder_heading_weight = self.encoder_heading_weight
 
         # Read sensors
         left_encoder, right_encoder = self.robot.encoders()
         beacon_x,beacon_y,beacon_z,unread = self.hh.read()
-
+        yaw, roll, pitch = self.bno.read_euler()
 
         ## Calculate odometry from encoders using filtered heading
         enc_delta_x, enc_delta_y, enc_delta_theta = self._odometry(left_encoder,right_encoder,self.filter_heading)
@@ -159,30 +178,49 @@ class PosFilter:
         enc_heading = self.filter_heading + enc_delta_theta
         enc_heading = (enc_heading + math.pi) % (math.pi*2) - math.pi
 
+        # Offset IMU heading
+        bno_heading = self.bno_offset + math.radians(360-yaw)
+        bno_heading = (bno_heading + math.pi) % (math.pi*2) - math.pi
+
         ## Integrate beacon reading if it is available
         if unread:
             # Align beacon into frame of reference
-            print(beacon_x,beacon_y)
             beacon_x -= self.beacon_origin_x
             beacon_y -= self.beacon_origin_y
-            print(beacon_x,beacon_y)
             beacon_x, beacon_y = np.array((beacon_x, beacon_y)).dot(self.beacon_rot_mat.T)
 
-            # Calculate beacon heading
-            self.beacon_heading = math.atan2(beacon_y - self.beacon_last_y,beacon_x - self.beacon_last_x)
-            self.beacon_heading = (self.beacon_heading + math.pi) % (math.pi*2) - math.pi
+            # scale
+            scale = 0.99277168494516
+            beacon_x *= scale
+            beacon_y *= scale
+
+            # Rolling average
+            beacon_x = (1-self.beacon_alpha) * beacon_x + self.beacon_alpha*self.beacon_last_x
+            beacon_y = (1-self.beacon_alpha) * beacon_y + self.beacon_alpha*self.beacon_last_y
+            '''
+            # Calculate heading
+            d_t = time.time() - self.beacon_last_time
+            d_dist = math.sqrt((self.beacon_last_x-beacon_x)**2 + (self.beacon_last_y-beacon_y)**2)
+            velocity = d_dist/d_t
+            if velocity > self.beacon_heading_velocity:
+                self.beacon_heading = math.atan2(beacon_y - self.beacon_last_y,beacon_x - self.beacon_last_x)
+                self.beacon_heading = (self.beacon_heading + math.pi) % (math.pi*2) - math.pi
+            else:
+                encoder_heading_weight = 1.0
+            '''
             self.beacon_last_x = beacon_x
             self.beacon_last_y = beacon_y
+            self.beacon_last_time = time.time()
 
         else:
             # Only update using the encoder values
-            encoder_weight = 1.0
+            encoder_xy_weight = 1.0
 
 
         # Complementary Filter
-        self.filter_x = (1-encoder_weight)*beacon_x + encoder_weight*enc_x
-        self.filter_y = (1-encoder_weight)*beacon_y + encoder_weight*enc_y
-        self.filter_heading = (1-encoder_weight)*self.beacon_heading + encoder_weight*enc_heading
+        self.filter_x = (1-encoder_xy_weight)*beacon_x + encoder_xy_weight*enc_x
+        self.filter_y = (1-encoder_xy_weight)*beacon_y + encoder_xy_weight*enc_y
+        self.filter_heading = (1-encoder_heading_weight)*bno_heading + encoder_heading_weight*enc_heading
 
         ## DEBUG
         # Calculate position using only odometry for performance analysis
@@ -211,7 +249,7 @@ if __name__=="__main__":
 
     robot = Roomba("COM10")
     hh = Hedgehog("COM8")
-    pos_filter = PosFilter(robot,hh,encoder_weight=0.9)
+    pos_filter = PosFilter(robot,hh,encoder_weight=0.98)
 
     speed = 0.1 # m/s
     update_rate = 40 # hz

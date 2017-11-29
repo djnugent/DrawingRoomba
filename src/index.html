@@ -1,0 +1,22 @@
+<head>
+    <script src="./p5.min.js"></script>
+    <script src="./websockets.js"></script>
+    <script src="./map.js"></script>
+
+    <style>
+        canvas {
+            position: absolute;
+            left: 30px;
+            right: 30px;
+        }
+    </style>
+</head>
+<body>
+    <button style="position: absolute; right: 10px; top: 10px" onclick="EnableSlabMode(event)">Slab Mode</button>
+    <button style="position: absolute; right: 10px; top: 40px" onclick="EnableWallMode(event)">Wall Mode</button>
+    <button style="position: absolute; right: 10px; top: 70px" onclick="setup()">Clear</button>
+    <button style="position: absolute; right: 10px; top: 100px" onclick="CreateCSV()">Create CSV</button>
+    <button style="position: absolute; right: 10px; top: 190px" onclick="EnableRoombaPlacementMode(event)">Place Roomba</button>
+
+    <p style="position: absolute; left: 1100px; top: 800px;">1 box = 6 inches</p>
+</body>

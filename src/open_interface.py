@@ -62,9 +62,7 @@ class Roomba:
         opcode = 7
         self._send("B",opcode)
 
-    # Command the roomba to move
-    # velocity ~ m/s ~ (-0.5 – 0.5 m/s)
-    # radius ~ m ~ (-2.0 – 2.0 m)
+
     def drive(self,velocity,radius):
         opcode = 137
 
