@@ -1,7 +1,7 @@
 import math
 import numpy as np
 import time
-#from Adafruit_BNO055 import BNO055
+from homography import HomographySolver
 
 
 class PosFilter:
@@ -12,10 +12,14 @@ class PosFilter:
         self.hh = hh
         self.bno = bno
 
+        # homography solver
+        self.hs = HomographySolver(dim = 2)
+
         # Constants
         self.wheel_base = 0.235 # meters
         self.encoder_xy_weight = encoder_xy_weight # ratio
         self.encoder_heading_weight = encoder_heading_weight
+        self.realign_dist = 2.0 # meters
         self.beacon_heading_velocity = .1
         self.beacon_alpha = 0.5
 
@@ -23,6 +27,9 @@ class PosFilter:
         self.filter_x = 0 # meters
         self.filter_y = 0 # meters
         self.filter_heading = math.pi/2 #radians
+        self.filter_history = []
+        self.beacon_history = []
+        self.unaligned_dist = 0
 
         # Internal state for performance comparison
         self.odometry_x = 0
@@ -33,25 +40,15 @@ class PosFilter:
         self.bno_offset = None
 
         # Beacon state
-        self.beacon_origin_x = None # X origin, need to calibrate to set
-        self.beacon_origin_y = None # Y origin, need to calibrate to set
-        self.beacon_rot_mat = None # Frame of reference rotation, need to calibrate to set
+        self.bec_R = None # Beacon rotation matrix
+        self.bec_t = None # Beacon translation matrix
         self.beacon_last_x = None # last beacon x location in meters
         self.beacon_last_y = None # last beacon y location in meters
         self.beacon_last_time = 0
         self.beacon_heading = 0 # beacon heading in radians
 
-    def calibrate(self,x0,y0,x1,y1):
-        # Translate origin
-        self.origin_offset_x = x0
-        self.origin_offset_y = y0
-
-        # Rotate
-        #current_angle = math.atan2()
-
 
     def align(self):
-
 
         # Wait for valid location from beacon
         print("waiting for valid data...")
@@ -66,78 +63,48 @@ class PosFilter:
         yaw, roll, pitch = self.bno.read_euler()
         self.bno_offset = self.filter_heading - math.radians(360 - yaw)
 
-        # Get starting location of beacon
-        num_readings = 10.0
-        avg_x, avg_y = 0,0
+
+        num_readings = 60.0
         cnt = 0
+        encoder_locs = np.zeros((num_readings,2))
+        beacon_locs = np.zeros((num_readings,2))
+
+        enc_x,enc_y,enc_heading = 0,0,math.pi/2
+        bec_x,bec_y,bec_z = 0,0,0
+
+        # Drive forward and log position from both sensors
+        self.robot.drive(0.05,0)
         while cnt < num_readings:
-            x,y,z,unread = self.hh.read()
-            if unread:
-                avg_x += x/num_readings
-                avg_y += y/num_readings
-                cnt += 1
-            time.sleep(0.1)
-        self.beacon_origin_x = avg_x
-        self.beacon_origin_y = avg_y
+            # read beacon
+            bec_x,bec_y,bec_z,unread = self.hh.read()
 
-        # Move forward
-        x,y,heading = 0,0,math.pi/2
-        self.robot.drive(0.1,0)
-        drive_time = 5
-        start = time.time()
-        while time.time()-start < drive_time:
-            # Dead recon
+            # Update encoder odometry
             left,right = self.robot.encoders()
-            diff_x, diff_y, diff_heading = self._odometry(left,right,heading)
-            x+=diff_x
-            y+=diff_y
-            heading+=diff_heading
+            diff_x, diff_y, diff_heading = self._odometry(left,right,enc_heading)
+            enc_x+=diff_x
+            enc_y+=diff_y
+            enc_heading+=diff_heading
 
-        # Register final encoder position
+            # Log locations
+            if unread:
+                encoder_locs[cnt] = np.array((enc_x,enc_y))
+                beacon_locs[cnt] = np.array((bec_x,bec_y))
+                cnt += 1
+
         self.robot.drive(0,0)
-        time.sleep(0.2)
-        left,right = self.robot.encoders()
-        diff_x, diff_y, diff_heading = self._odometry(left,right,heading)
-        x+=diff_x
-        y+=diff_y
-        heading+=diff_heading
-        enc_final_x, enc_final_y = x,y
 
         # load filter
-        self.filter_x = x
-        self.filter_y = y
-        self.odometry_x = x
-        self.odometry_y = y
+        self.filter_x = enc_x
+        self.filter_y = enc_y
+        self.odometry_x = enc_x
+        self.odometry_y = enc_y
+        self.beacon_last_x = bec_x
+        self.beacon_last_y = bec_y
 
+        # Solve for the transformation between coordinate systems
+        self.bec_R,self.bec_t,rmse = self.hs.solve_transformation(beacon_locs,encoder_locs)
+        print("Error:", rmse)
 
-        # Register final beacon pos
-        avg_x, avg_y = 0,0
-        cnt = 0
-        while cnt < num_readings:
-            x,y,z,unread = self.hh.read()
-            if unread:
-                avg_x += x/num_readings
-                avg_y += y/num_readings
-                cnt += 1
-            time.sleep(0.1)
-
-        beacon_final_x, beacon_final_y = avg_x,avg_y
-        self.beacon_last_x = avg_x
-        self.beacon_last_y = avg_y
-
-        # Calculate heading offset
-        enc_angle = math.atan2(enc_final_y - enc_origin_y,enc_final_x - enc_origin_x)
-        beacon_angle = math.atan2(beacon_final_y-self.beacon_origin_y,beacon_final_x-self.beacon_origin_x)
-        angle_offset = enc_angle - beacon_angle
-
-        print(self.beacon_origin_x,self.beacon_origin_y,self.beacon_last_x,self.beacon_last_y,math.degrees(angle_offset))
-
-
-        # Calculate rotation matrix
-        self.beacon_rot_mat = np.array((
-                                    (math.cos(angle_offset),-math.sin(angle_offset)),
-                                    (math.sin(angle_offset),math.cos(angle_offset))
-                                    ))
 
     def _odometry(self,left_encoder, right_encoder, heading):
         enc_delta_x = 0
@@ -185,19 +152,21 @@ class PosFilter:
         ## Integrate beacon reading if it is available
         if unread:
             # Align beacon into frame of reference
-            beacon_x -= self.beacon_origin_x
-            beacon_y -= self.beacon_origin_y
-            beacon_x, beacon_y = np.array((beacon_x, beacon_y)).dot(self.beacon_rot_mat.T)
+            A = (self.bec_R*np.mat([[beacon_x, beacon_y]]).T + np.tile(self.bec_t, (1, 1))).T
+            A = np.asarray(A)
+            beacon_x, beacon_y = A[0]
 
             # scale
             scale = 0.99277168494516
             beacon_x *= scale
             beacon_y *= scale
 
+
+            '''
             # Rolling average
             beacon_x = (1-self.beacon_alpha) * beacon_x + self.beacon_alpha*self.beacon_last_x
             beacon_y = (1-self.beacon_alpha) * beacon_y + self.beacon_alpha*self.beacon_last_y
-            '''
+
             # Calculate heading
             d_t = time.time() - self.beacon_last_time
             d_dist = math.sqrt((self.beacon_last_x-beacon_x)**2 + (self.beacon_last_y-beacon_y)**2)
@@ -212,15 +181,44 @@ class PosFilter:
             self.beacon_last_y = beacon_y
             self.beacon_last_time = time.time()
 
-        else:
-            # Only update using the encoder values
-            encoder_xy_weight = 1.0
-
 
         # Complementary Filter
         self.filter_x = (1-encoder_xy_weight)*beacon_x + encoder_xy_weight*enc_x
         self.filter_y = (1-encoder_xy_weight)*beacon_y + encoder_xy_weight*enc_y
         self.filter_heading = (1-encoder_heading_weight)*bno_heading + encoder_heading_weight*enc_heading
+
+        # Log positions from beacons and encoders
+        if unread:
+            # update distance travelled since last alignment
+            if len(self.filter_history) > 0:
+                last_fil_x, last_fil_y = self.filter_history[-1]
+                self.unaligned_dist += math.sqrt((self.filter_x - last_fil_x)**2 + (self.filter_y - last_fil_y)**2)
+
+            # Log positions
+            self.filter_history.append([self.filter_x,self.filter_y])
+            self.beacon_history.append([self.beacon_last_x, self.beacon_last_y])
+
+            # Check if we are due for realignment in order to cancel encoder drift
+            if self.unaligned_dist >= self.realign_dist:
+                # Calculate transformation between the coordinate systems
+                R,t,rmse = self.hs.solve_transformation(np.array(self.filter_history), np.array(self.beacon_history))
+
+                # Realign filter with absolute beacon position
+                old_x, old_y = self.filter_x, self.filter_y
+                A = (R*np.mat([[self.filter_x, self.filter_y]]).T + np.tile(t, (1, 1))).T
+                A = np.asarray(A)
+                self.filter_x, self.filter_Y = A[0]
+
+                # DEBUG
+                realignment_dist = math.sqrt((old_x - self.filter_x)**2 + (old_y - self.filter_y)**2)
+                print(">>REALIGNMENT -- rmse:",rmse, "shift(m):",realignment_dist)
+
+
+                # Clear history
+                self.unaligned_dist = 0
+                self.filter_history = []
+                self.beacon_history = []
+
 
         ## DEBUG
         # Calculate position using only odometry for performance analysis

@@ -6,23 +6,32 @@ class PosController:
     def __init__(self):
         self.dist_p = 0.5
         self.turn_p = 1
-        self.spin_p = 0.07
+        self.spin_p = 0.05
 
         self.target_x = None
         self.target_y = None
         self.target_heading = None
 
-        self.min_speed = 0.015 # m/s
-        self.max_speed = 0.2 # m/s
+        self.min_speed = 0.011 # m/s this causes angular inaccuracies. We need finer tune control
+        self.max_speed = 0.25 # m/s
         self.min_radius = 0.02 # meters ( wheel base diameter)
         self.max_radius = 2.0 # meters
-        self.dist_precision = 0.005 # meters
-        self.heading_precision = 0.1 # degrees
+        self.dist_precision = 0.003 # meters 0.005
+        self.heading_precision = 0.05 # degrees 0.1
         self.transit_angle = 7 # degrees
-        self.fine_tune_dist = 0.01 # meters
+        self.fine_tune_dist = 0.05 # meters
+        self.accel = 0.035 # velocity step
 
-    def _spd_lim(self,spd):
-        return np.sign(spd) * min(max(abs(spd),self.min_speed),self.max_speed)
+        self.last_spd = 0
+
+    def _spd_lim(self,spd,turn=True):
+        if not turn:
+            max_spd = min(self.last_spd + self.accel, self.max_speed) # limit acceleration
+        else:
+            max_spd = self.max_speed
+        lim = np.sign(spd) * min(max(abs(spd),self.min_speed),max_spd)
+        self.last_spd = lim
+        return lim
 
     def _rad_lim(self,rad):
         rad = np.sign(rad) * max(abs(rad),self.min_radius)
@@ -79,7 +88,7 @@ class PosController:
         # We are in transit to location
         else:
             #print("here5")
-            linear_speed = self._spd_lim(dist_error * self.dist_p)
+            linear_speed = self._spd_lim(dist_error * self.dist_p,turn=False)
             if transit_heading_error != 0:
                 radius = self._rad_lim(linear_speed / (self.turn_p*transit_heading_error))
             else:

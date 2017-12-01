@@ -19,6 +19,12 @@ def set_servo_pulse(channel, pulse):
     pulse //= pulse_length
     servos.set_pwm(channel, 0, pulse)
 
+def offset_waypoint(x,y,heading):
+    marker_offset = 0.23495 # marker displacement in meters off the back of the roomba
+    wx = x + marker_offset*math.cos(heading)
+    wy = y + marker_offset*math.sin(heading)
+    return wx,wy
+
 # Figure out serial device ports
 cmd = "sudo udevadm info --query=property --name=/dev/ttyUSB0 | grep SERIAL="
 os.system(cmd + " > tmp")
@@ -43,14 +49,14 @@ servos = Adafruit_PCA9685.PCA9685(0x6f)
 marker = 0 # channel 0
 slide = 1 # channel 1
 ## Marker servo
-marker_down = 1485 #1500
-marker_up = 2000
+marker_down = 1500 #1900
+marker_up = 2250
 ## Slide servo
 slide_left = 1130
 slide_right = 1900
 # Default position
 set_servo_pulse(marker, marker_up)
-#set_servo_pulse(slide, slide_right)
+set_servo_pulse(slide, slide_right)
 
 # Connect to IMU
 bno = BNO055.BNO055(serial_port=bno_port)
@@ -63,30 +69,24 @@ bno.set_calibration(bno_cal)
 
 
 # Create Position Filter
-pos_filter = PosFilter(robot,hh,bno,encoder_xy_weight=1,encoder_heading_weight=0)
+pos_filter = PosFilter(robot,hh,bno,encoder_xy_weight=1,encoder_heading_weight=0.0)
 
 # Create Position Controller
 pos_ctrl = PosController()
 
-'''
-# Handle program termination gracefully
-def signal_term_handler(signal, frame):
-    print("exit")
-    robot.close()
-    sys.exit(0)
-signal.signal(signal.SIGTERM, signal_term_handler)
-'''
+
 length = 1 # meters
 width = 1 # meters
-waypoints = np.array([[0, 0.5, 90],
-                     [0, 0.5 + length, -90]])
+waypoints = np.array([[0, length, -90],
+                        [0, 0, 90]
+                     ])
 '''
 waypoints = np.array([[0, length, 90],
                      [width, length, 0],
                      [width,  0,  -90],
                      [0,  0,  180]])
 '''
-update_rate = 60 #hz
+update_rate = 100 #hz
 last_update = 0
 cnt = 0
 state = "transit"
@@ -94,8 +94,10 @@ state = "transit"
 pos_filter.align()
 
 
-pnt = waypoints[cnt%(len(waypoints))]
-pos_ctrl.set(pnt[0],pnt[1],math.radians(pnt[2]))
+pnt = waypoints[0]
+wx,wy,wheading = pnt[0],pnt[1],math.radians(pnt[2])
+wx,wy = offset_waypoint(wx,wy,wheading)
+pos_ctrl.set(wx,wy,wheading)
 
 try:
     while True:
@@ -104,16 +106,18 @@ try:
                 x,y,heading = pos_filter.update()
                 bec_x,bec_y,bec_heading = pos_filter.get_beacon_est()
                 odo_x, odo_y,odo_heading = pos_filter.get_odometry_est()
-                #print("Filter - X: {}m, Y: {}m, heading: {}deg".format(round(x,3),round(y,3),round(math.degrees(heading),3)))
-                #print("Beacon - X: {}m, Y: {}m, heading: {}deg".format(round(bec_x,3),round(bec_y,3),round(math.degrees(bec_heading),3)))
-                #print("Odometry X: {}m, Y: {}m, heading: {}deg".format(round(odo_x,3),round(odo_y,3),round(math.degrees(odo_heading),3)))
-                #print("------------------------------------------")
+                print("Filter - X: {}m, Y: {}m, heading: {}deg".format(round(x,3),round(y,3),round(math.degrees(heading),3)))
+                print("Beacon - X: {}m, Y: {}m, heading: {}deg".format(round(bec_x,3),round(bec_y,3),round(math.degrees(bec_heading),3)))
+                print("Odometry X: {}m, Y: {}m, heading: {}deg".format(round(odo_x,3),round(odo_y,3),round(math.degrees(odo_heading),3)))
+                print("------------------------------------------")
                 speed, rad, arrived = pos_ctrl.update(x,y,heading)
                 robot.drive(speed,rad)
                 if arrived:
                     cnt += 1
-                    pnt = waypoints[cnt%(len(waypoints))]
-                    pos_ctrl.set(pnt[0],pnt[1],math.radians(pnt[2]))
+                    pnt = waypoints[cnt%len(waypoints)]
+                    wx,wy,wheading = pnt[0],pnt[1],math.radians(pnt[2])
+                    wx,wy = offset_waypoint(wx,wy,wheading)
+                    pos_ctrl.set(wx,wy,wheading)
                     state = "mark"
                     time.sleep(0.75)
                 last_update = time.time()
@@ -154,7 +158,7 @@ try:
 
             # slide marker left
             set_servo_pulse(slide, slide_left)
-            time.sleep(1)
+            time.sleep(1.5)
 
             # drive forward
             sx,sy,heading = pos_filter.update()

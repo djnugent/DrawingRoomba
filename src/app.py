@@ -18,11 +18,10 @@ import os
 
 
 '''
-# Add homography
-# Offset marker point
-# Tune controllers
-# Make IMU initialize more robust
-# Add Docking
+# 2) Add homography
+# 3) Tune controllers
+# 5) Make IMU initialize more robust
+# 4) Add Docking
 '''
 
 
@@ -33,6 +32,12 @@ def set_servo_pulse(channel, pulse):
     pulse_length //= 4096     # 12 bits of resolution
     pulse //= pulse_length
     servos.set_pwm(channel, 0, pulse)
+
+def offset_waypoint(x,y,heading):
+    marker_offset = 0.23495 # marker displacement in meters off the back of the roomba
+    wx = x + marker_offset*math.cos(heading)
+    wy = y + marker_offset*math.sin(heading)
+    return wx,wy
 
 # Figure out serial device ports
 cmd = "sudo udevadm info --query=property --name=/dev/ttyUSB0 | grep SERIAL="
@@ -58,27 +63,26 @@ servos = Adafruit_PCA9685.PCA9685(0x6f)
 marker = 0 # channel 0
 slide = 1 # channel 1
 ## Marker servo
-marker_down = 1900 #1485
-marker_up = 2000
+marker_down = 1485 #1900
+marker_up = 2250
 ## Slide servo
 slide_left = 1130
 slide_right = 1900
 # Default position
 set_servo_pulse(marker, marker_up)
-#set_servo_pulse(slide, slide_right)
+set_servo_pulse(slide, slide_right)
 
 # Connect to IMU
 bno = BNO055.BNO055(serial_port=bno_port)
 if not bno.begin():
     raise RuntimeError('Failed to initialize BNO055! Is the sensor connected?')
 
-# Set BNO calibration(run calibrate bno to get these values)
+# Set BNO calibration(run calibrate_bno.py to get these values)
 bno_cal = [254, 255, 24, 0, 19, 0, 5, 250, 86, 0, 249, 247, 255, 255, 255, 255, 0, 0, 232, 3, 14, 3]
 bno.set_calibration(bno_cal)
 
-
 # Create Position Filter
-pos_filter = PosFilter(robot,hh,bno,encoder_xy_weight=1,encoder_heading_weight=0)
+pos_filter = PosFilter(robot,hh,bno,encoder_xy_weight=1,encoder_heading_weight=0.0)
 
 # Create Position Controller
 pos_ctrl = PosController()
@@ -86,10 +90,9 @@ pos_ctrl = PosController()
 
 clients = []
 waypoints = None
-
 waypoint_lock = threading.Lock()
 
-class EchoCSV(WebSocket):
+class WebAppSocket(WebSocket):
 
     def handleMessage(self):
         with waypoint_lock:
@@ -107,10 +110,9 @@ class EchoCSV(WebSocket):
 
 
 ## Start Server
-# Server setup
 PORT = 80
 Handler = http.server.SimpleHTTPRequestHandler
-server = SimpleWebSocketServer('', 4000, EchoCSV)
+server = SimpleWebSocketServer('', 4000, WebAppSocket)
 httpd = socketserver.TCPServer(('', PORT), Handler)
 
 print("serving at port", PORT)
@@ -133,20 +135,20 @@ while True:
             time.sleep(0.5)
 
         # Roomba state
-        update_rate = 60 #hz
+        update_rate = 100 #hz
         last_update = 0
         cnt = 0
         state = "transit"
         complete = False
 
-
         # Run calibration
         pos_filter.align()
 
-
         # Load first waypoint
-        pnt = waypoints[cnt%(len(waypoints))]
-        pos_ctrl.set(pnt["x"],pnt["y"],pnt["heading"])
+        pnt = waypoints[0]
+        wx,wy,wheading = pnt["x"],pnt["y"],pnt["heading"]
+        wx,wy = offset_waypoint(wx,wy,wheading)
+        pos_ctrl.set(wx,wy,wheading)
 
         # Run layout
         while True:
@@ -179,7 +181,9 @@ while True:
                             complete = True
                         else:
                             pnt = waypoints[cnt]
-                            pos_ctrl.set(pnt["x"],pnt["y"],pnt["heading"])
+                            wx,wy,wheading = pnt["x"],pnt["y"],pnt["heading"]
+                            wx,wy = offset_waypoint(wx,wy,wheading)
+                            pos_ctrl.set(wx,wy,wheading)
                         # Transition to marking
                         state = "mark"
                         time.sleep(0.75)
@@ -191,7 +195,6 @@ while True:
             # Draw a mark
             if state == "mark":
                 ### Draw a U shape
-
                 # put marker down
                 set_servo_pulse(marker, marker_down)
                 time.sleep(0.3)
@@ -209,7 +212,7 @@ while True:
 
                 # slide marker left
                 set_servo_pulse(slide, slide_left)
-                time.sleep(1)
+                time.sleep(1.5)
 
                 # drive forward
                 sx,sy,heading = pos_filter.update()
