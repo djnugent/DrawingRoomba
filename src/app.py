@@ -63,7 +63,7 @@ servos = Adafruit_PCA9685.PCA9685(0x6f)
 marker = 0 # channel 0
 slide = 1 # channel 1
 ## Marker servo
-marker_down = 1485 #1900
+marker_down = 1492 #1485 #1900
 marker_up = 2250
 ## Slide servo
 slide_left = 1130
@@ -82,7 +82,7 @@ bno_cal = [254, 255, 24, 0, 19, 0, 5, 250, 86, 0, 249, 247, 255, 255, 255, 255, 
 bno.set_calibration(bno_cal)
 
 # Create Position Filter
-pos_filter = PosFilter(robot,hh,bno,encoder_xy_weight=1,encoder_heading_weight=0.0)
+pos_filter = PosFilter(robot,hh,bno,encoder_xy_weight=1,encoder_heading_weight=1.0)
 
 # Create Position Controller
 pos_ctrl = PosController()

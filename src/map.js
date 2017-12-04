@@ -8,7 +8,7 @@ const MAX_X = 800;
 const MAX_Y = 600;
 const LINE_SPACING = 20;
 const onlyAllow90 = true;
-var mode = 1; // 0 is wall mode, 1 is slab mode, 2 is roomba placement mode, 3 is wall select mode
+var mode = 0; // 0 is wall mode, 1 is slab mode, 2 is roomba placement mode, 3 is wall select mode
 
 let receivedRoombaX = 0;
 let receivedRoombaY = 0;
@@ -114,7 +114,7 @@ function draw() {
     // draw the roomba at its current position
     strokeWeight(1);
     stroke(0, 150, 0);
-    ellipse(setRoombaX + receivedRoombaX, setRoombaY + receivedRoombaY, 50);
+    ellipse(setRoombaX + receivedRoombaX, setRoombaY - receivedRoombaY, 50);
 }
 
 /*
@@ -141,20 +141,22 @@ function CreateCSV(){
     }
     var csv = [];
     lines.forEach(line => {
-        let x1 = line.x1 - (setRoombaX + receivedRoombaX);
-        let y1 = line.y1 - (setRoombaY + receivedRoombaY);
-        let x2 = line.x2 - (setRoombaX + receivedRoombaX);
-        let y2 = line.y2 - (setRoombaY + receivedRoombaY);
-        csv.push({
-            x: x1 * 6 / LINE_SPACING * 2.54 / 100,
-            y: -1 * y1 * 6 / LINE_SPACING * 2.54 / 100,
-            heading: Math.atan2((y1 - y2), (x2 - x1))
-        });
-        csv.push({
-            x: x2 * 6 / LINE_SPACING * 2.54 / 100,
-            y: -1 * y2 * 6 / LINE_SPACING * 2.54 / 100,
-            heading: Math.atan2((y2 - y1), (x1 - x2))
-        });
+        if(line.type === 0) {
+            let x1 = line.x1 - (setRoombaX + receivedRoombaX);
+            let y1 = line.y1 - (setRoombaY + receivedRoombaY);
+            let x2 = line.x2 - (setRoombaX + receivedRoombaX);
+            let y2 = line.y2 - (setRoombaY + receivedRoombaY);
+            csv.push({
+                x: x1 * 6 / LINE_SPACING * 2.54 / 100,
+                y: -1 * y1 * 6 / LINE_SPACING * 2.54 / 100,
+                heading: Math.atan2((y1 - y2), (x2 - x1))
+            });
+            csv.push({
+                x: x2 * 6 / LINE_SPACING * 2.54 / 100,
+                y: -1 * y2 * 6 / LINE_SPACING * 2.54 / 100,
+                heading: Math.atan2((y2 - y1), (x1 - x2))
+            });
+        }
     })
     console.log(csv);
 
@@ -238,4 +240,22 @@ function calculateSnapPoint() {
     snap.y = Math.max(xDistance, yDistance) == yDistance ? intersection.y : click1.y;
 
     return snap;
+}
+
+function SetStaticLines() {
+    lines = [
+        {x1: 100, y1: 260, x2: 200, y2: 260, type: 0},
+        {x1: 160, y1: 254, x2: 160, y2: 180, type: 0},
+        {x1: 166, y1: 220, x2: 240, y2: 220, type: 0},
+        {x1: 380, y1: 260, x2: 494, y2: 260, type: 0},
+        {x1: 500, y1: 340, x2: 500, y2: 120, type: 0},
+        {x1: 500, y1: 60, x2: 500, y2: 20, type: 0},
+        {x1: 506, y1: 340, x2: 640, y2: 340, type: 0},
+        {x1: 400, y1: 380, x2: 260, y2: 380, type: 0},
+        {x1: 320, y1: 386, x2: 320, y2: 440, type: 0},
+        {x1: 640, y1: 20, x2: 100, y2: 20, type: 1},
+        {x1: 100, y1: 20, x2: 100, y2: 440, type: 1},
+        {x1: 100, y1: 440, x2: 640, y2: 440, type: 1},
+        {x1: 640, y1: 440, x2: 640, y2: 20, type: 1}
+    ]
 }

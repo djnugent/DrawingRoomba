@@ -75,7 +75,7 @@ pos_filter = PosFilter(robot,hh,bno,encoder_xy_weight=1,encoder_heading_weight=0
 pos_ctrl = PosController()
 
 
-length = 1 # meters
+length = 6 # meters
 width = 1 # meters
 waypoints = np.array([[0, length, -90],
                         [0, 0, 90]
